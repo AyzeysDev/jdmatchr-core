@@ -1,10 +1,10 @@
-# matchwise-core
-🧠 MatchWise Core – The secure, modular Spring Boot backend powering MatchWise. Includes OAuth2 login, GPT-4o-based resume-JD analysis, and RESTful APIs for full-stack integration.
+# jdmatchr-core
+🧠 JDMatchR Core – The secure, modular Spring Boot backend powering JDMatchR. Includes OAuth2 login, GPT-4o-based resume-JD analysis, and RESTful APIs for full-stack integration.
 
 
-# 🧠 MatchWise Core – Spring Boot Backend
+# 🧠 JDMatchR Core – Spring Boot Backend
 
-**MatchWise Core** is the secure and extensible Spring Boot backend that powers [MatchWise](https://github.com/YOUR_USERNAME/matchwise-ui) — a resume and job description analyzer that helps job seekers align their resumes to real job posts.
+**JDMatchR Core** is the secure and extensible Spring Boot backend that powers [JDMatchR](https://github.com/ayzeysdev/jdmatchr-ui) — a resume and job description analyzer that helps job seekers align their resumes to real job posts.
 
 This backend provides:
 - ✅ Secure authentication (OAuth2 + JWT)
