@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Custom local configuration files with secrets
+/src/main/resources/local-config.properties
