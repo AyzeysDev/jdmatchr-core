@@ -1,51 +1,58 @@
-package com.jdmatchr.core.config; // Adjust package name if yours is different
+package com.jdmatchr.core.config;
 
+import com.jdmatchr.core.service.UserDetailsServiceImpl; // Import your UserDetailsService
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer; // For disabling CSRF in newer Spring Security
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 
-@Configuration // Indicates that this class contains Spring configuration beans
-@EnableWebSecurity // Enables Spring Security's web security support
+@Configuration
+@EnableWebSecurity
 public class SecurityConfig {
 
-    /**
-     * Defines a PasswordEncoder bean that uses BCrypt hashing algorithm.
-     * BCrypt is a strong hashing algorithm that includes a salt to protect against rainbow table attacks.
-     * This bean will be available for dependency injection wherever password encoding is needed (e.g., in your AuthService).
-     *
-     * @return A BCryptPasswordEncoder instance.
-     */
+    private final UserDetailsServiceImpl userDetailsServiceImpl;
+
+    @Autowired
+    public SecurityConfig(UserDetailsServiceImpl userDetailsServiceImpl) {
+        this.userDetailsServiceImpl = userDetailsServiceImpl;
+    }
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
     /**
-     * Configures the security filter chain that applies to HTTP requests.
-     * This is where you define which endpoints are public, which require authentication,
-     * how authentication is performed, CSRF protection, session management, etc.
+     * Exposes the AuthenticationManager as a Bean.
+     * This AuthenticationManager is configured to use our custom UserDetailsService
+     * and PasswordEncoder.
      *
-     * @param http The HttpSecurity object to configure.
-     * @return The configured SecurityFilterChain.
+     * @param http HttpSecurity to obtain the shared AuthenticationManagerBuilder.
+     * @return The configured AuthenticationManager.
      * @throws Exception If an error occurs during configuration.
      */
     @Bean
+    public AuthenticationManager authenticationManager(HttpSecurity http) throws Exception {
+        AuthenticationManagerBuilder authenticationManagerBuilder =
+                http.getSharedObject(AuthenticationManagerBuilder.class);
+        authenticationManagerBuilder
+                .userDetailsService(userDetailsServiceImpl) // Tell Spring Security to use your service to load users
+                .passwordEncoder(passwordEncoder());      // Tell Spring Security which password encoder to use
+        return authenticationManagerBuilder.build();
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                // Disable CSRF (Cross-Site Request Forgery) protection.
-                // CSRF protection is typically needed for browser-based sessions with cookies.
-                // For stateless REST APIs that use token-based authentication (like JWTs from NextAuth),
-                // and where the frontend and backend might be on different domains, CSRF is often disabled.
-                // Ensure you understand the implications if your API is called directly from browsers in a stateful way.
-                .csrf(AbstractHttpConfigurer::disable) // Modern way to disable CSRF
-
-                // Configure authorization rules for HTTP requests.
+                .csrf(AbstractHttpConfigurer::disable) // Disable CSRF for stateless APIs
                 .authorizeHttpRequests(authorizeRequests ->
                         authorizeRequests
                                 // Permit all requests to /api/v1/auth/** (for /register, /login)
@@ -54,31 +61,17 @@ public class SecurityConfig {
                                 // Permit access to your test /hello endpoint (if you still have it)
                                 .requestMatchers("/hello", "/").permitAll()
                                 // For any other request, authentication is required.
-                                // We will configure JWT validation for these later.
+                                // JWT validation will be added later for these.
                                 .anyRequest().authenticated()
                 )
-
-                // Configure session management.
-                // For a stateless API backend that relies on tokens (like JWTs from NextAuth),
-                // we typically set session creation to STATELESS.
-                // This means Spring Security will not create or use HTTP sessions.
+                // Configure session management to be stateless, as JWTs will manage session state.
                 .sessionManagement(sessionManagement ->
                         sessionManagement.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 );
 
-        // Later, you will add configuration here for JWT validation if Spring Boot
-        // needs to validate tokens for its own protected resources.
-        // For now, NextAuth handles the primary token validation for calls proxied through it.
-        // If Spring Boot endpoints are called directly by the frontend with a JWT,
-        // then Spring Boot needs to validate that JWT.
+        // Later, a JWT authentication filter will be added here to process Bearer tokens
+        // for the .anyRequest().authenticated() routes.
 
         return http.build();
     }
-
-    // Optional: If you need to configure WebSecurity for ignoring static resources,
-    // but for a pure API backend, this is often not necessary.
-    // @Bean
-    // public WebSecurityCustomizer webSecurityCustomizer() {
-    //     return (web) -> web.ignoring().requestMatchers("/css/**", "/js/**", "/images/**");
-    // }
 }

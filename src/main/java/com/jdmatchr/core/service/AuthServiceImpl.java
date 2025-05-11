@@ -2,94 +2,95 @@ package com.jdmatchr.core.service; // Adjust package name if yours is different
 
 import com.jdmatchr.core.dto.RegisterRequest;
 import com.jdmatchr.core.dto.UserResponse;
-// Comment out entity and repository imports if not used in this temporary version
-// import com.jdmatchr.core.entity.Account;
-// import com.jdmatchr.core.entity.User;
-// import com.jdmatchr.core.repository.AccountRepository;
-// import com.jdmatchr.core.repository.UserRepository;
+import com.jdmatchr.core.entity.Account;
+import com.jdmatchr.core.entity.User;
+import com.jdmatchr.core.repository.AccountRepository; // Make sure this is imported
+import com.jdmatchr.core.repository.UserRepository;    // Make sure this is imported
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-// Transactional annotation is not strictly needed if no DB operations occur
-// import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Transactional; // Ensure this is imported
 
-import java.util.UUID; // For generating a mock UUID
+// No need for java.util.UUID here if your entities handle ID generation
 
 /**
- * Simplified Implementation of the {@link AuthService} interface for basic testing.
- * This version does NOT interact with a database and returns mock responses.
- * It's intended for use when database auto-configuration is excluded.
+ * Implementation of the {@link AuthService} interface.
+ * Handles the business logic for user registration using database persistence.
  */
 @Service // Marks this class as a Spring service component
 public class AuthServiceImpl implements AuthService {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthServiceImpl.class);
 
-    // Repositories are injected but will not be used in this simplified version
-    // private final UserRepository userRepository;
-    // private final AccountRepository accountRepository;
+    private final UserRepository userRepository;
+    private final AccountRepository accountRepository; // Though not directly used in registerUser if cascading from User
     private final PasswordEncoder passwordEncoder;
 
     /**
      * Constructor-based dependency injection.
-     * Spring will automatically inject PasswordEncoder.
-     * UserRepository and AccountRepository would be injected if not commented out.
+     * Spring will automatically inject instances of UserRepository, AccountRepository, and PasswordEncoder.
      */
     @Autowired
-    public AuthServiceImpl(
-            // UserRepository userRepository, // Temporarily comment out if not used
-            // AccountRepository accountRepository, // Temporarily comment out if not used
-            PasswordEncoder passwordEncoder) {
-        // this.userRepository = userRepository;
-        // this.accountRepository = accountRepository;
+    public AuthServiceImpl(UserRepository userRepository,
+                           AccountRepository accountRepository,
+                           PasswordEncoder passwordEncoder) {
+        this.userRepository = userRepository;
+        this.accountRepository = accountRepository;
         this.passwordEncoder = passwordEncoder;
-        logger.info("AuthServiceImpl initialized (Simplified for Basic Testing - NO DB INTERACTIONS).");
+        logger.info("AuthServiceImpl initialized (Database Persistence Enabled).");
     }
 
     /**
-     * MOCK Registers a new user.
-     * This method simulates registration without database interaction.
+     * Registers a new user by persisting their details to the database.
+     * This method is transactional.
      *
      * @param registerRequest DTO containing registration details.
-     * @return UserResponse DTO with mock data.
+     * @return UserResponse DTO of the newly created user.
+     * @throws RuntimeException (or a more specific custom exception like UserAlreadyExistsException)
+     * if a user with the provided email already exists or if the request is invalid.
      */
     @Override
-    // @Transactional // Not needed as there are no actual DB transactions
+    @Transactional // Ensures that the entire method runs within a single database transaction.
     public UserResponse registerUser(RegisterRequest registerRequest) {
         if (registerRequest == null) {
             logger.warn("Registration request is null.");
             throw new IllegalArgumentException("Registration request cannot be null.");
         }
 
-        logger.info("AuthService: registerUser called for email: {} (MOCKED - NO DB INTERACTION)", registerRequest.getEmail());
+        logger.info("AuthService: Attempting to register user with email: {}", registerRequest.getEmail());
 
-        // 1. Simulate checking for existing user (always assume user doesn't exist for this mock)
-        // if (userRepository.existsByEmail(registerRequest.getEmail())) {
-        //     throw new RuntimeException("Error: Email address already in use: " + registerRequest.getEmail());
-        // }
-        // For mock, let's simulate a conflict for a specific email to test controller error handling
-        if ("conflict@example.com".equals(registerRequest.getEmail())) {
-            logger.warn("Simulating email conflict for: {}", registerRequest.getEmail());
-            throw new RuntimeException("Email address already in use: " + registerRequest.getEmail());
+        // 1. Check if user with the given email already exists using the repository
+        if (userRepository.existsByEmail(registerRequest.getEmail())) {
+            logger.warn("Registration failed: Email address {} already in use.", registerRequest.getEmail());
+            // In a real application, you'd throw a more specific custom exception.
+            throw new RuntimeException("Error: Email address already in use: " + registerRequest.getEmail());
         }
 
+        // 2. Create a new User entity
+        User newUser = new User();
+        newUser.setName(registerRequest.getName());
+        newUser.setEmail(registerRequest.getEmail());
+        // Timestamps (createdAt, updatedAt) will be set by @PrePersist in User entity
 
-        // 2. "Hash" the password (the operation is performed, but not stored)
-        String hashedPassword = passwordEncoder.encode(registerRequest.getPassword());
-        logger.debug("Password for {} would be hashed to: {} (not stored)", registerRequest.getEmail(), hashedPassword);
+        // 3. Create a new Account entity for 'credentials'
+        Account newAccount = new Account();
+        newAccount.setProviderType("credentials"); // Standard type for email/password
+        newAccount.setProviderId("credentials");   // Standard identifier for this type
+        newAccount.setProviderAccountId(registerRequest.getEmail()); // Use email as the account ID for credentials
+        newAccount.setPasswordHash(passwordEncoder.encode(registerRequest.getPassword())); // Hash the password
 
-        // 3. Create and return a mock UserResponse DTO
-        // Generate a random UUID for the mock user ID
-        UUID mockUserId = UUID.randomUUID();
-        UserResponse mockResponse = new UserResponse(
-                mockUserId,
-                registerRequest.getName(),
-                registerRequest.getEmail()
-        );
+        // 4. Link the Account to the User (bi-directional relationship)
+        // The User.addAccount() method should handle setting both sides of the relationship.
+        newUser.addAccount(newAccount);
 
-        logger.info("Mock registration successful for email: {}. Mock User ID: {}", mockResponse.getEmail(), mockResponse.getId());
-        return mockResponse;
+        // 5. Save the User entity. Due to CascadeType.ALL on User.accounts (defined in User entity),
+        // the associated Account entity will also be persisted automatically when the User is saved.
+        User savedUser = userRepository.save(newUser);
+        logger.info("User and associated account saved successfully for email: {}. User ID: {}", savedUser.getEmail(), savedUser.getId());
+
+        // 6. Return a UserResponse DTO containing details of the persisted user
+        return new UserResponse(savedUser.getId(), savedUser.getName(), savedUser.getEmail());
     }
 }
