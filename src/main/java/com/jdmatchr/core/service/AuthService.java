@@ -1,9 +1,12 @@
 package com.jdmatchr.core.service; // Adjust package name if yours is different
 
+import com.jdmatchr.core.dto.EnsureOAuthRequest;
 import com.jdmatchr.core.dto.RegisterRequest;
 import com.jdmatchr.core.dto.UserResponse;
 // Potentially import custom exceptions if you define them later
 // import com.jdmatchr.core.exception.UserAlreadyExistsException;
+import java.util.Map; // For returning a simple { "userId": "..." }
+import java.util.UUID;
 
 /**
  * Interface for authentication-related services.
@@ -20,4 +23,5 @@ public interface AuthService {
     // but the logic for validating credentials will reside within Spring Security's flow,
     // potentially using a UserDetailsService if we go that route.
     // For now, we focus on registration.
+    Map<String, UUID> ensureOAuthUser(EnsureOAuthRequest ensureOAuthRequest);
 }
