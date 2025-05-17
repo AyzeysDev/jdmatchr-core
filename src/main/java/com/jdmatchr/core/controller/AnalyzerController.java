@@ -1,10 +1,9 @@
+// src/main/java/com/jdmatchr/core/controller/AnalyzerController.java
 package com.jdmatchr.core.controller;
 
 import com.jdmatchr.core.dto.InsightDetailDto;
 import com.jdmatchr.core.dto.InsightSummaryDto;
 import com.jdmatchr.core.dto.LatestInsightResponseDto;
-// AnalysisRequestAckDto is not used by the primary /process endpoint anymore
-// import com.jdmatchr.core.dto.AnalysisRequestAckDto;
 import com.jdmatchr.core.entity.User;
 import com.jdmatchr.core.repository.UserRepository;
 import com.jdmatchr.core.service.AnalyzerService;
@@ -20,7 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
-import java.util.Map;
+import java.util.Map; // Keep for error response Map.of("error", "message")
 import java.util.Optional;
 import java.util.UUID;
 
@@ -41,14 +40,14 @@ public class AnalyzerController {
 
     /**
      * Processes the uploaded resume and job description, performs a mock analysis,
-     * saves the result to the database, and returns details including the new insight ID.
+     * saves the result to the database, and returns the detailed insight.
      */
     @PostMapping("/process")
-    public ResponseEntity<?> processDocuments(
-            @RequestParam(value = "resumeFile", required = false) MultipartFile resumeFile,
-            @RequestParam("jobTitle") String jobTitle,
-            @RequestParam("jobDescription") String jobDescription,
-            @AuthenticationPrincipal UserDetails userDetails // Injected by Spring Security if JWT is valid
+    public ResponseEntity<?> processDocuments( // Return type changed to ResponseEntity<?> to handle potential errors with Map
+                                               @RequestParam(value = "resumeFile", required = false) MultipartFile resumeFile,
+                                               @RequestParam("jobTitle") String jobTitle,
+                                               @RequestParam("jobDescription") String jobDescription,
+                                               @AuthenticationPrincipal UserDetails userDetails
     ) {
         if (userDetails == null) {
             logger.warn("POST /process: Request with no authenticated user.");
@@ -58,29 +57,29 @@ public class AnalyzerController {
         String email = userDetails.getUsername();
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> {
-                    logger.error("POST /process: Authenticated user with email {} not found in repository. This indicates a potential data integrity issue or misconfiguration.", email);
+                    logger.error("POST /process: Authenticated user with email {} not found in repository.", email);
                     return new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "User details not found for authenticated user.");
                 });
 
         logger.info("POST /process: Received analysis request for user: {}, Job Title: {}", email, jobTitle);
         if (resumeFile == null || resumeFile.isEmpty()) {
-            logger.warn("POST /process: No resume file provided by user {}.", email);
-            // The service method analyzeDocuments handles null resumeFile
+            logger.warn("POST /process: No resume file provided by user {}. Mock filename will be used if service implies.", email);
         }
 
         try {
             // Call the service method that performs mock analysis AND saves to DB
-            Map<String, Object> analysisResultWithId = analyzerService.analyzeDocuments(resumeFile, jobTitle, jobDescription, user);
+            InsightDetailDto analysisResultDto = analyzerService.analyzeDocuments(resumeFile, jobTitle, jobDescription, user);
 
-            if (analysisResultWithId.containsKey("insightId")) {
-                logger.info("POST /process: Successfully processed and saved insight. ID: {}", analysisResultWithId.get("insightId"));
-                return ResponseEntity.ok(analysisResultWithId);
+            if (analysisResultDto != null && analysisResultDto.id() != null) {
+                logger.info("POST /process: Successfully processed and saved insight. ID: {}", analysisResultDto.id());
+                return ResponseEntity.ok(analysisResultDto);
             } else {
-                logger.error("POST /process: Service method analyzeDocuments did not return an insightId for user {}", email);
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Analysis completed but failed to retrieve result ID."));
+                logger.error("POST /process: Service method analyzeDocuments did not return a valid InsightDetailDto for user {}", email);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Analysis completed but failed to retrieve result details."));
             }
-        } catch (RuntimeException e) {
+        } catch (Exception e) { // Catching general exception for robustness
             logger.error("POST /process: Error during document analysis for user {}: {}", email, e.getMessage(), e);
+            // Consider creating a more structured error response if needed, similar to ApiErrorResponse
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Analysis failed: " + e.getMessage()));
         }
     }
@@ -100,7 +99,7 @@ public class AnalyzerController {
     }
 
     @GetMapping("/latest")
-    public ResponseEntity<LatestInsightResponseDto> getLatestInsight(@AuthenticationPrincipal UserDetails userDetails) {
+    public ResponseEntity<?> getLatestInsight(@AuthenticationPrincipal UserDetails userDetails) { // Changed to ResponseEntity<?>
         if (userDetails == null) {
             logger.warn("GET /latest: Request with no authenticated user.");
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
@@ -111,9 +110,23 @@ public class AnalyzerController {
         logger.info("GET /latest: Fetching latest insight for user {}", user.getEmail());
         Optional<InsightDetailDto> latestInsightOpt = analyzerService.getLatestInsightForUser(user);
 
-        UUID latestId = latestInsightOpt.map(InsightDetailDto::id).orElse(null);
-        logger.info("GET /latest: Latest insight ID for user {}: {}", user.getEmail(), latestId);
-        return ResponseEntity.ok(new LatestInsightResponseDto(latestId));
+        if (latestInsightOpt.isPresent()) {
+            // If you want to return the full InsightDetailDto for /latest:
+            // return ResponseEntity.ok(latestInsightOpt.get());
+
+            // If you want to return just the ID as per the old LatestInsightResponseDto:
+            UUID latestId = latestInsightOpt.get().id();
+            logger.info("GET /latest: Latest insight ID for user {}: {}", user.getEmail(), latestId);
+            return ResponseEntity.ok(new LatestInsightResponseDto(latestId));
+            // For now, I'll keep the LatestInsightResponseDto as the problem description implies a specific structure for POST and GET /{id}
+            // but doesn't explicitly state /latest should also change to the full DTO.
+            // If /latest should also return the full InsightDetailDto, change the return type to ResponseEntity<InsightDetailDto>
+            // and return ResponseEntity.ok(latestInsightOpt.get());
+        } else {
+            logger.info("GET /latest: No insights found for user {}", user.getEmail());
+            // Return 200 OK with null ID as per previous LatestInsightResponseDto behavior for no insights
+            return ResponseEntity.ok(new LatestInsightResponseDto(null));
+        }
     }
 
     @GetMapping("/{id}")

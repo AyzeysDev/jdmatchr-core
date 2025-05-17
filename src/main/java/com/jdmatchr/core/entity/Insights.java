@@ -1,3 +1,4 @@
+// src/main/java/com/jdmatchr/core/entity/Insights.java
 package com.jdmatchr.core.entity;
 
 import jakarta.persistence.*;
@@ -32,15 +33,18 @@ public class Insights {
     @Column(name = "job_title", length = 255, nullable = false)
     private String jobTitle;
 
-    // Optional fields you might add later or for MVP if simple
+    // This field might be a brief summary, while the detailed one is in analysisResult.jdSummary
     @Column(name = "job_description_summary", columnDefinition = "TEXT")
     private String jobDescriptionSummary;
 
     @Column(name = "resume_filename", length = 255)
     private String resumeFilename;
 
-    @Column(name = "match_score") // Using NUMERIC(5, 2) in SQL schema
-    private Double matchScore; // Use Double for scores like 85.50
+    @Column(name = "match_score") // Using NUMERIC(5, 2) in SQL schema, or just let Hibernate decide
+    private Double matchScore; // Use Double for scores like 85.50, DTO will use Integer
+
+    @Column(name = "ats_score") // New field
+    private Integer atsScore;
 
     /**
      * Stores the detailed analysis results as a JSONB object in PostgreSQL.
@@ -48,15 +52,8 @@ public class Insights {
      * Hibernate needs a hint for JSONB types.
      */
     @JdbcTypeCode(SqlTypes.JSON) // Standard JPA 3.0+ / Hibernate 6+ way for JSON/JSONB
-    @Column(name = "analysis_result", columnDefinition = "jsonb", nullable = false)
+    @Column(name = "analysis_result", columnDefinition = "jsonb") // Removed nullable = false to allow for gradual updates if needed
     private Map<String, Object> analysisResult;
-    // Example structure for analysisResult:
-    // {
-    //   "keywordMatches": ["Java", "Spring Boot", "Microservices"],
-    //   "missingKeywords": ["Kubernetes", "AWS"],
-    //   "suggestions": "Consider adding more details about your cloud experience.",
-    //   "overallSentiment": "Positive"
-    // }
 
 
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -79,6 +76,8 @@ public class Insights {
     public void setResumeFilename(String resumeFilename) { this.resumeFilename = resumeFilename; }
     public Double getMatchScore() { return matchScore; }
     public void setMatchScore(Double matchScore) { this.matchScore = matchScore; }
+    public Integer getAtsScore() { return atsScore; } // Getter for atsScore
+    public void setAtsScore(Integer atsScore) { this.atsScore = atsScore; } // Setter for atsScore
     public Map<String, Object> getAnalysisResult() { return analysisResult; }
     public void setAnalysisResult(Map<String, Object> analysisResult) { this.analysisResult = analysisResult; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

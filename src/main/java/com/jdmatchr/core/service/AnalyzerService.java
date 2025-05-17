@@ -1,33 +1,35 @@
+// src/main/java/com/jdmatchr/core/service/AnalyzerService.java
 package com.jdmatchr.core.service;
 
-import com.jdmatchr.core.dto.AnalysisRequestAckDto; // For the mock confirmation if still needed elsewhere
-import com.jdmatchr.core.dto.InsightDetailDto;
+import com.jdmatchr.core.dto.AnalysisRequestAckDto;
+import com.jdmatchr.core.dto.InsightDetailDto; // Ensure this is imported
 import com.jdmatchr.core.dto.InsightSummaryDto;
 import com.jdmatchr.core.entity.User;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
-import java.util.Map; // analyzeDocuments currently returns a Map
 import java.util.Optional;
 import java.util.UUID;
+// Removed import java.util.Map; as analyzeDocuments no longer returns it.
 
 public interface AnalyzerService {
 
     /**
      * Processes the uploaded resume and job description, performs mock analysis,
-     * saves the result to the Insights table, and returns details of the new insight.
+     * saves the result to the Insights table, and returns details of the new insight
+     * as an InsightDetailDto.
      *
      * @param resumeFile The uploaded resume file.
      * @param jobTitle The job title for the analysis.
      * @param jobDescription The job description text.
      * @param authenticatedUser The authenticated User entity.
-     * @return A Map containing details of the created insight, including "insightId".
+     * @return An InsightDetailDto containing details of the created insight.
      */
-    Map<String, Object> analyzeDocuments(
-            MultipartFile resumeFile,
-            String jobTitle,
-            String jobDescription,
-            User authenticatedUser
+    InsightDetailDto analyzeDocuments( // Return type changed to InsightDetailDto
+                                       MultipartFile resumeFile,
+                                       String jobTitle,
+                                       String jobDescription,
+                                       User authenticatedUser
     );
 
     /**
@@ -52,8 +54,6 @@ public interface AnalyzerService {
      */
     Optional<InsightDetailDto> getInsightByIdAndUser(UUID insightId, User user);
 
-    // The mock confirmation method, if you want to keep it for other testing purposes
-    // If not needed, it can be removed from the interface and implementation.
     /**
      * FOR INITIAL TESTING/DEBUGGING: Receives analysis request, logs inputs, and returns a mock acknowledgment.
      * Does not perform full analysis or save to the main Insights table.
