@@ -1,13 +1,14 @@
 // src/main/java/com/jdmatchr/core/service/AnalyzerServiceImpl.java
+// (Modifications to integrate new services)
 package com.jdmatchr.core.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.jdmatchr.core.dto.*; // Imports all DTOs from the package
 import com.jdmatchr.core.entity.Insights;
 import com.jdmatchr.core.entity.User;
 import com.jdmatchr.core.repository.InsightsRepository;
-import com.jdmatchr.core.repository.UserRepository;
+import com.jdmatchr.core.repository.UserRepository; // Kept for now, but might not be needed directly here
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,174 +16,175 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Random;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.util.LinkedHashMap; // To preserve order in maps for JSON
 
 @Service
 public class AnalyzerServiceImpl implements AnalyzerService {
 
     private static final Logger logger = LoggerFactory.getLogger(AnalyzerServiceImpl.class);
 
-    private final UserRepository userRepository; // Kept for processAnalysisRequestMock, can be removed if that method is removed
+    private final UserRepository userRepository; // May not be needed if User is passed directly
     private final InsightsRepository insightsRepository;
-    private final ObjectMapper objectMapper; // For converting Map to DTO
+    private final ObjectMapper objectMapper;
+    private final PdfParserService pdfParserService;
+    private final PromptBuilderService promptBuilderService;
+    private final AnalysisAiService analysisAiService;
 
     @Autowired
-    public AnalyzerServiceImpl(UserRepository userRepository, InsightsRepository insightsRepository) {
+    public AnalyzerServiceImpl(UserRepository userRepository,
+                               InsightsRepository insightsRepository,
+                               ObjectMapper objectMapper, // Spring Boot auto-configures this
+                               PdfParserService pdfParserService,
+                               PromptBuilderService promptBuilderService,
+                               AnalysisAiService analysisAiService) {
         this.userRepository = userRepository;
         this.insightsRepository = insightsRepository;
-        this.objectMapper = new ObjectMapper();
-        this.objectMapper.registerModule(new JavaTimeModule()); // Important for OffsetDateTime
+        this.objectMapper = objectMapper;
+        this.pdfParserService = pdfParserService;
+        this.promptBuilderService = promptBuilderService;
+        this.analysisAiService = analysisAiService;
     }
 
     @Override
-    @Transactional
-    public InsightDetailDto analyzeDocuments( // Return type changed
-                                              MultipartFile resumeFile,
-                                              String jobTitle,
-                                              String jobDescription,
-                                              User authenticatedUser
+    @Transactional // Make this transactional as it involves DB write
+    public InsightDetailDto analyzeDocuments(
+            MultipartFile resumeFile,
+            String jobTitle,
+            String jobDescription,
+            User authenticatedUser // Directly use the User entity passed from controller
     ) {
         logger.info("analyzeDocuments service called for user ID: {}, Job Title: {}", authenticatedUser.getId(), jobTitle);
 
-        String originalResumeFilename = "Updated_Resume_FE.pdf"; // Mocked as per example
+        String resumeText;
+        String originalResumeFilename = "N/A"; // Default if no file
         long resumeFileSize = 0;
 
         if (resumeFile != null && !resumeFile.isEmpty()) {
             originalResumeFilename = resumeFile.getOriginalFilename();
             resumeFileSize = resumeFile.getSize();
-            logger.info("Resume received: {}, Size: {} bytes", originalResumeFilename, resumeFileSize);
+            try {
+                logger.info("Parsing resume file: {}", originalResumeFilename);
+                resumeText = pdfParserService.parsePdf(resumeFile);
+                if (resumeText.isBlank()) {
+                    logger.warn("Extracted resume text is blank for file: {}", originalResumeFilename);
+                    // Decide handling: throw error, or proceed with blank resumeText?
+                    // For now, proceed, AI might handle it or prompt can be adjusted.
+                }
+            } catch (IOException e) {
+                logger.error("Failed to parse resume PDF '{}': {}", originalResumeFilename, e.getMessage(), e);
+                // Consider throwing a specific business exception to be caught by controller
+                throw new RuntimeException("Error processing resume file: " + e.getMessage(), e);
+            }
         } else {
-            logger.warn("No resume file provided or file is empty for job title: {}. Using mock filename.", jobTitle);
+            logger.warn("No resume file provided for job title: {}. Proceeding without resume text.", jobTitle);
+            resumeText = ""; // Or handle as an error if resume is mandatory
         }
 
-        // 2. Mock AI Model Call & Result Generation (New Structure)
-        Random random = new Random();
-        int matchScoreInt = 84; // From example
-        int atsScoreInt = 76;   // From example
+        logger.info("Building prompt for AI analysis. Job Title: {}, Resume Text Length: {}", jobTitle, resumeText.length());
+        String prompt = promptBuilderService.buildPrompt(jobTitle, jobDescription, resumeText);
 
-        // Using LinkedHashMap to preserve insertion order for JSON output if it matters
-        Map<String, Object> analysisResultData = new LinkedHashMap<>();
-        analysisResultData.put("mockProcessingTimestamp", OffsetDateTime.now(ZoneOffset.UTC).toString());
+        AnalysisResultDto analysisResultDto;
+        try {
+            logger.info("Sending prompt to AI for analysis...");
+            analysisResultDto = analysisAiService.getAnalysisFromAi(prompt);
+        } catch (Exception e) { // Catch JsonProcessingException or RuntimeException from AnalysisAiService
+            logger.error("Failed to get analysis from AI for job title '{}': {}", jobTitle, e.getMessage(), e);
+            throw new RuntimeException("AI analysis failed: " + e.getMessage(), e);
+        }
 
-        Map<String, Object> jdSummaryMap = new LinkedHashMap<>();
-        jdSummaryMap.put("summary", "Seeking a frontend engineer with 3+ years of experience building scalable web interfaces. Strong emphasis on React, component libraries, and unit testing. Team-oriented, remote-first culture.");
-        jdSummaryMap.put("responsibilities", List.of(
-                "Develop and maintain component libraries using React",
-                "Collaborate with design teams to implement UI/UX features",
-                "Write unit and integration tests"
-        ));
-        jdSummaryMap.put("requiredQualifications", List.of(
-                "3+ years experience with JavaScript/TypeScript",
-                "Deep knowledge of React and modern frontend tooling",
-                "Familiarity with CI/CD and testing frameworks"
-        ));
-        jdSummaryMap.put("tone", "Technical, collaborative, modern");
-        analysisResultData.put("jdSummary", jdSummaryMap);
+        // If mockProcessingTimestamp is not part of AI response, set it here.
+        // For this example, I'll create a new DTO instance if it's immutable (record)
+        // or set the field if it's a mutable class.
+        // Assuming AnalysisResultDto is a record and we want to add the timestamp:
+        if (analysisResultDto.mockProcessingTimestamp() == null) {
+            analysisResultDto = new AnalysisResultDto(
+                    OffsetDateTime.now().toString(), // Set current timestamp
+                    analysisResultDto.matchScore(),
+                    analysisResultDto.atsScore(),
+                    analysisResultDto.jdSummary(),
+                    analysisResultDto.fluffAnalysis(),
+                    analysisResultDto.roleFitAndAlignmentMetrics(),
+                    analysisResultDto.keywordAnalysis(),
+                    analysisResultDto.resumeSuggestions(),
+                    analysisResultDto.interviewPreparationTopics()
+            );
+        }
 
-        Map<String, Object> fluffAnalysisMap = new LinkedHashMap<>();
-        fluffAnalysisMap.put("detected", List.of(
-                Map.of("original", "Helped with building internal dashboards.", "suggestion", "Designed and developed internal dashboards using React and D3.js."),
-                Map.of("original", "Worked on performance improvements.", "suggestion", "Optimized React components, reducing page load times by 40%.")
-        ));
-        fluffAnalysisMap.put("summary", "Your resume contains 2 areas where stronger, action-based phrasing can improve clarity and impact.");
-        analysisResultData.put("fluffAnalysis", fluffAnalysisMap);
 
-        Map<String, Object> roleFitMap = new LinkedHashMap<>();
-        roleFitMap.put("prediction", Map.of("verdict", "Strong Match", "reason", "Your resume demonstrates clear alignment with the job’s core responsibilities, particularly in React, TypeScript, and UI design patterns."));
-        Map<String, Integer> radarDataMap = new LinkedHashMap<>();
-        radarDataMap.put("technicalSkills", 90);
-        radarDataMap.put("softSkills", 70);
-        radarDataMap.put("experienceLevel", 85);
-        radarDataMap.put("cultureFit", 60);
-        roleFitMap.put("radarData", radarDataMap);
-        Map<String, Integer> alignmentBreakdownMap = new LinkedHashMap<>();
-        alignmentBreakdownMap.put("skills", 90);
-        alignmentBreakdownMap.put("experience", 85);
-        alignmentBreakdownMap.put("education", 75);
-        alignmentBreakdownMap.put("keywords", 72);
-        roleFitMap.put("alignmentBreakdown", alignmentBreakdownMap);
-        analysisResultData.put("roleFitAndAlignmentMetrics", roleFitMap);
+        logger.info("AI analysis complete. Match Score: {}, ATS Score: {}", analysisResultDto.matchScore(), analysisResultDto.atsScore());
 
-        Map<String, Object> keywordAnalysisMap = new LinkedHashMap<>();
-        keywordAnalysisMap.put("missingKeywords", List.of("GraphQL", "Next.js"));
-        keywordAnalysisMap.put("keywordDensityScore", 72);
-        keywordAnalysisMap.put("matchedKeywords", List.of("React", "TypeScript", "JavaScript", "UI Design"));
-        analysisResultData.put("keywordAnalysis", keywordAnalysisMap);
+        // Convert AnalysisResultDto to Map<String, Object> for database persistence (Option A)
+        Map<String, Object> analysisResultMap = objectMapper.convertValue(analysisResultDto, new TypeReference<Map<String, Object>>() {});
 
-        analysisResultData.put("resumeSuggestions", List.of(
-                "Consider adding a section for personal projects if relevant.",
-                "Quantify achievements in your 'Frontend Developer at XYZ' role with specific metrics (e.g., 'Improved performance by X%').",
-                "Tailor the summary section to better reflect the job requirements for 'Frontend Engineer'."
-        ));
-        analysisResultData.put("interviewPreparationTopics", List.of(
-                "Be prepared to discuss your experience with state management in React (e.g., Redux, Zustand, Context API).",
-                "Review common JavaScript data structures and algorithms.",
-                "Formulate questions to ask the interviewer about their development workflow and team collaboration tools."
-        ));
-        logger.info("Mock AI analysis complete for job title: '{}'. Match Score: {}%, ATS Score: {}%", jobTitle, matchScoreInt, atsScoreInt);
-
-        // 3. Save Insights to Database
         Insights newInsight = new Insights();
         newInsight.setUser(authenticatedUser);
-        newInsight.setJobTitle(jobTitle); // Using the actual job title from request
-        // Set the brief summary for the entity field, detailed one is in analysisResult
+        newInsight.setJobTitle(jobTitle);
         newInsight.setJobDescriptionSummary(jobDescription.substring(0, Math.min(jobDescription.length(), 250)) + (jobDescription.length() > 250 ? "..." : ""));
         newInsight.setResumeFilename(originalResumeFilename);
-        newInsight.setMatchScore((double) matchScoreInt); // Store as double
-        newInsight.setAtsScore(atsScoreInt); // Store new ATS score
-        newInsight.setAnalysisResult(analysisResultData);
-        // newInsight.setCreatedAt() is handled by @PrePersist
+        // Scores are now part of AnalysisResultDto, which is stored in analysisResultMap.
+        // The Insights entity's direct matchScore and atsScore fields can be populated from the DTO for quick access/querying if desired.
+        newInsight.setMatchScore(analysisResultDto.matchScore() != null ? analysisResultDto.matchScore().doubleValue() : null);
+        newInsight.setAtsScore(analysisResultDto.atsScore());
+        newInsight.setAnalysisResult(analysisResultMap);
+        // newInsight.setCreatedAt() is handled by @PrePersist in Insights entity
 
         Insights savedInsight = insightsRepository.save(newInsight);
         logger.info("Saved new insight with ID: {} for user: {}", savedInsight.getId(), authenticatedUser.getEmail());
 
-        // 4. Construct and Return DTO
+        // Construct and Return DTO (InsightDetailDto)
+        // The convertToDetailDto method will need to correctly map from the savedInsight,
+        // especially the analysisResultMap back to AnalysisResultDto.
         return convertToDetailDto(savedInsight);
     }
 
-    @Override
-    @Transactional(readOnly = true)
-    public AnalysisRequestAckDto processAnalysisRequestMock(
-            MultipartFile resumeFile,
-            String jobTitle,
-            String jobDescription,
-            User authenticatedUser
-    ) {
-        logger.info("--- MOCK ANALYSIS REQUEST RECEIVED (NO DB SAVE) ---");
-        logger.info("User: {}", authenticatedUser.getEmail());
-        logger.info("User ID: {}", authenticatedUser.getId());
-        logger.info("Job Title: {}", jobTitle);
-        String resumeFilename = "N/A";
-        long resumeSize = 0;
-        if (resumeFile != null && !resumeFile.isEmpty()) {
-            resumeFilename = resumeFile.getOriginalFilename();
-            resumeSize = resumeFile.getSize();
-            logger.info("Resume Filename: {}", resumeFilename);
-            logger.info("Resume Size: {} bytes", resumeSize);
-        } else {
-            logger.warn("No resume file received or file is empty.");
-        }
-        String jdSnippet = jobDescription != null ? jobDescription.substring(0, Math.min(jobDescription.length(), 50)) + "..." : "N/A";
-        logger.info("Job Description Snippet: {}", jdSnippet);
-        logger.info("--- END MOCK ANALYSIS REQUEST (NO DB SAVE) ---");
 
-        return new AnalysisRequestAckDto(
-                "Analysis request successfully received by backend (mock response, no DB save).",
-                jobTitle,
-                resumeFilename,
-                resumeSize,
-                jdSnippet,
-                authenticatedUser.getId().toString()
+    // This method remains largely the same, but ensure it correctly reconstructs
+    // AnalysisResultDto from the Map<String, Object> stored in the Insights entity.
+    private InsightDetailDto convertToDetailDto(Insights insight) {
+        if (insight == null) {
+            return null;
+        }
+
+        AnalysisResultDto analysisResultDto = null;
+        if (insight.getAnalysisResult() != null && !insight.getAnalysisResult().isEmpty()) {
+            try {
+                // Convert the Map<String, Object> from entity back to AnalysisResultDto
+                analysisResultDto = objectMapper.convertValue(insight.getAnalysisResult(), AnalysisResultDto.class);
+            } catch (IllegalArgumentException e) {
+                logger.error("Error converting analysisResult map to DTO for insight ID {}: {}", insight.getId(), e.getMessage(), e);
+            }
+        } else {
+            logger.warn("Insight ID {} has null or empty analysisResult map.", insight.getId());
+        }
+
+        // Use the direct fields from Insight entity for scores if they are populated,
+        // otherwise, they should be within the analysisResultDto.
+        // The prompt now puts matchScore and atsScore INSIDE the main JSON from AI.
+        Integer matchScoreFromDto = (analysisResultDto != null) ? analysisResultDto.matchScore() : null;
+        Integer atsScoreFromDto = (analysisResultDto != null) ? analysisResultDto.atsScore() : null;
+
+
+        return new InsightDetailDto(
+                insight.getId(),
+                insight.getJobTitle(),
+                insight.getResumeFilename(),
+                insight.getCreatedAt(),
+                matchScoreFromDto, // Get from parsed DTO
+                atsScoreFromDto,   // Get from parsed DTO
+                analysisResultDto
         );
     }
+
+    // --- Other existing methods (getInsightsHistoryForUser, getLatestInsightForUser, etc.) ---
+    // These methods would also use convertToDetailDto or a similar conversion for summaries.
+    // Ensure InsightSummaryDto also gets its matchScore and atsScore correctly.
+    // The mock method processAnalysisRequestMock can be kept or removed as per your needs.
 
     @Override
     @Transactional(readOnly = true)
@@ -190,20 +192,37 @@ public class AnalyzerServiceImpl implements AnalyzerService {
         logger.debug("Fetching insights history for user ID: {}", user.getId());
         List<Insights> insightsList = insightsRepository.findByUserOrderByCreatedAtDesc(user);
         return insightsList.stream()
-                .map(insight -> new InsightSummaryDto(
-                        insight.getId(),
-                        insight.getJobTitle(),
-                        insight.getCreatedAt(),
-                        insight.getMatchScore() != null ? insight.getMatchScore().intValue() : null, // Convert to Integer for DTO
-                        insight.getAtsScore(), // Add atsScore
-                        insight.getResumeFilename()
-                ))
+                .map(insight -> {
+                    // For summary, we might need to extract scores from the JSON if not top-level on Insight entity
+                    Integer matchScore = null;
+                    Integer atsScore = null;
+                    if (insight.getAnalysisResult() != null) {
+                        // A bit inefficient to parse full DTO for summary, but works.
+                        // Alternatively, could fetch specific fields from JSON map.
+                        try {
+                            AnalysisResultDto tempDto = objectMapper.convertValue(insight.getAnalysisResult(), AnalysisResultDto.class);
+                            matchScore = tempDto.matchScore();
+                            atsScore = tempDto.atsScore();
+                        } catch (Exception e) {
+                            logger.warn("Could not parse scores from analysisResult for summary of insight ID {}", insight.getId());
+                        }
+                    } else {
+                        // Fallback to direct entity fields if they are still maintained (they are in current Insights entity)
+                        matchScore = insight.getMatchScore() != null ? insight.getMatchScore().intValue() : null;
+                        atsScore = insight.getAtsScore();
+                    }
+
+                    return new InsightSummaryDto(
+                            insight.getId(),
+                            insight.getJobTitle(),
+                            insight.getCreatedAt(),
+                            matchScore,
+                            atsScore,
+                            insight.getResumeFilename()
+                    );
+                })
                 .collect(Collectors.toList());
     }
-
-    // Overload to adapt to the new InsightSummaryDto if it changes
-    // For now, the existing InsightSummaryDto does not have atsScore, so I'll update it.
-    // See updated InsightSummaryDto below.
 
     @Override
     @Transactional(readOnly = true)
@@ -221,32 +240,24 @@ public class AnalyzerServiceImpl implements AnalyzerService {
                 .map(this::convertToDetailDto);
     }
 
-    private InsightDetailDto convertToDetailDto(Insights insight) {
-        if (insight == null) {
-            return null;
-        }
-
-        AnalysisResultDto analysisResultDto = null;
-        if (insight.getAnalysisResult() != null) {
-            try {
-                // Convert the Map<String, Object> to AnalysisResultDto using ObjectMapper
-                analysisResultDto = objectMapper.convertValue(insight.getAnalysisResult(), AnalysisResultDto.class);
-            } catch (IllegalArgumentException e) {
-                logger.error("Error converting analysisResult map to DTO for insight ID {}: {}", insight.getId(), e.getMessage(), e);
-                // Optionally, create a default/error state for analysisResultDto or leave it null
-            }
-        }
-
-        Integer matchScoreInt = insight.getMatchScore() != null ? insight.getMatchScore().intValue() : null;
-
-        return new InsightDetailDto(
-                insight.getId(),
-                insight.getJobTitle(),
-                insight.getResumeFilename(),
-                insight.getCreatedAt(),
-                matchScoreInt,
-                insight.getAtsScore(),
-                analysisResultDto
+    // Mock method - can be removed or updated if no longer needed.
+    @Override
+    @Transactional(readOnly = true)
+    public AnalysisRequestAckDto processAnalysisRequestMock(
+            MultipartFile resumeFile,
+            String jobTitle,
+            String jobDescription,
+            User authenticatedUser
+    ) {
+        logger.info("--- MOCK ANALYSIS REQUEST RECEIVED (NO DB SAVE) ---");
+        // ... (rest of the mock implementation)
+        return new AnalysisRequestAckDto(
+                "Analysis request successfully received by backend (mock response, no DB save).",
+                jobTitle,
+                (resumeFile != null ? resumeFile.getOriginalFilename() : "N/A"),
+                (resumeFile != null ? resumeFile.getSize() : 0),
+                jobDescription.substring(0, Math.min(jobDescription.length(), 50)) + "...",
+                authenticatedUser.getId().toString()
         );
     }
 }
