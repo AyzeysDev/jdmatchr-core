@@ -29,30 +29,30 @@ public class PromptBuilderServiceImpl implements PromptBuilderService {
         You are a career analysis assistant.
 
         Return ONLY a valid JSON object with the exact format below.
-        For all arrays (e.g., 'detected', 'missingKeywords', 'matchedKeywords', 'resumeSuggestions', 'interviewPreparationTopics'), STRICTLY limit the number of items to a maximum of 5. Select only the most critical and impactful items.
+        For all arrays, select only the most critical and impactful items, adhering to the maximum number of items specified for each field.
 
         {
           "matchScore": number,
           "atsScore": number,
           "fluffAnalysis": {
-            "summary": string,
-            "detected": [{ "original": string, "suggestion": string }] // MAX 4 items
+            "summary": "string (1-2 brief sentences)", // Example of specific brevity instruction
+            "detected": [{ "original": string, "suggestion": string }] // MAX 5 items - most impactful
           },
           "roleFitAndAlignmentMetrics": {
             "prediction": {
-              "verdict": "string (must be one of: 'Misfit', 'Developing', 'Strong', 'Optimal')", // MODIFIED HERE
-              "reason": "string (concise reason for the verdict)"
+              "verdict": "string (must be one of: 'Misfit', 'Developing', 'Strong', 'Optimal')",
+              "reason": "string (concise reason for the verdict, 2-3 sentences)" // Example of specific brevity
             },
             "radarData": { "technicalSkills": number, "softSkills": number, "experienceLevel": number, "cultureFit": number },
             "alignmentBreakdown": { "skills": number, "experience": number, "education": number, "keywords": number }
           },
           "keywordAnalysis": {
-            "matchedKeywords": string[], // MAX 5 items
-            "missingKeywords": string[], // MAX 5 items
+            "matchedKeywords": string[], // MAX 10 items - most relevant matched keywords
+            "missingKeywords": string[], // MAX 10 items - most critical missing keywords
             "keywordDensityScore": number
           },
-          "resumeSuggestions": string[], // MAX 4 concise suggestions
-          "interviewPreparationTopics": string[] // MAX 4 key topics
+          "resumeSuggestions": string[], // MAX 4 concise suggestions - most impactful
+          "interviewPreparationTopics": string[] // MAX 4 key topics - most impactful
         }
 
         Only respond with the JSON — no other commentary.
