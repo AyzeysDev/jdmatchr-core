@@ -1,12 +1,11 @@
 // src/main/java/com/jdmatchr/core/service/AnalyzerServiceImpl.java
-// This is the version you provided, with the specific logging for the prompt it generates.
 package com.jdmatchr.core.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jdmatchr.core.dto.*;
-import com.jdmatchr.core.entity.Insights;
-import com.jdmatchr.core.entity.User;
+import com.jdmatchr.core.entity.Insights; // Ensure this import is present
+import com.jdmatchr.core.entity.User; // Ensure this import is present
 import com.jdmatchr.core.repository.InsightsRepository;
 import com.jdmatchr.core.repository.UserRepository;
 import org.slf4j.Logger;
@@ -17,7 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.time.OffsetDateTime;
+import java.time.OffsetDateTime; // Ensure this is imported for InsightSummaryDto
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -28,7 +27,6 @@ import java.util.stream.Collectors;
 public class AnalyzerServiceImpl implements AnalyzerService {
 
     private static final Logger logger = LoggerFactory.getLogger(AnalyzerServiceImpl.class);
-    // aiIoLogger removed.
 
     private final UserRepository userRepository;
     private final InsightsRepository insightsRepository;
@@ -60,6 +58,7 @@ public class AnalyzerServiceImpl implements AnalyzerService {
             String jobDescription,
             User authenticatedUser
     ) {
+        // ... (previous logic for resume parsing, prompt building, AI call remains the same) ...
         logger.info("analyzeDocuments service called for user ID: {}, Job Title: {}", authenticatedUser.getId(), jobTitle);
 
         String resumeText;
@@ -86,39 +85,21 @@ public class AnalyzerServiceImpl implements AnalyzerService {
                 jobTitle, jobDescription.length(), resumeText.length());
         String prompt = promptBuilderService.buildPrompt(jobTitle, jobDescription, resumeText);
 
-        // Log the exact prompt being sent from AnalyzerServiceImpl using the main logger
-        // Be mindful of PII and log verbosity in production.
         logger.info("Exact prompt constructed by PromptBuilderService (to be sent to AnalysisAiService from AnalyzerServiceImpl):\n{}", prompt);
 
-
-        AnalysisResultDto analysisResultDto;
+        AnalysisResultDto analysisResultDtoFromAi;
         try {
             logger.info("Sending prompt to AnalysisAiService for full analysis...");
-            analysisResultDto = analysisAiService.getAnalysisFromAi(prompt);
-            // Exact AI output and token counts are now logged within analysisAiService.getAnalysisFromAi using logger.info()
+            analysisResultDtoFromAi = analysisAiService.getAnalysisFromAi(prompt);
         } catch (Exception e) {
             logger.error("Failed to get analysis from AI for job title '{}': {}", jobTitle, e.getMessage(), e);
             throw new RuntimeException("AI analysis failed: " + e.getMessage(), e);
         }
 
-        if (analysisResultDto.mockProcessingTimestamp() == null) {
-            analysisResultDto = new AnalysisResultDto(
-                    OffsetDateTime.now().toString(),
-                    analysisResultDto.matchScore(),
-                    analysisResultDto.atsScore(),
-                    analysisResultDto.jdSummary(),
-                    analysisResultDto.fluffAnalysis(),
-                    analysisResultDto.roleFitAndAlignmentMetrics(),
-                    analysisResultDto.keywordAnalysis(),
-                    analysisResultDto.resumeSuggestions(),
-                    analysisResultDto.interviewPreparationTopics()
-            );
-        }
+        logger.info("AI analysis complete. Match Score from AI: {}, ATS Score from AI: {}",
+                analysisResultDtoFromAi.matchScore(), analysisResultDtoFromAi.atsScore());
 
-        logger.info("AI analysis complete. Match Score: {}, ATS Score: {}",
-                analysisResultDto.matchScore(), analysisResultDto.atsScore());
-
-        Map<String, Object> analysisResultMap = objectMapper.convertValue(analysisResultDto, new TypeReference<Map<String, Object>>() {});
+        Map<String, Object> analysisResultMapToStore = objectMapper.convertValue(analysisResultDtoFromAi, new TypeReference<Map<String, Object>>() {});
 
         Insights newInsight = new Insights();
         newInsight.setUser(authenticatedUser);
@@ -126,9 +107,9 @@ public class AnalyzerServiceImpl implements AnalyzerService {
         newInsight.setJobDescriptionSummary(jobDescription.substring(0, Math.min(jobDescription.length(), 250))
                 + (jobDescription.length() > 250 ? "..." : ""));
         newInsight.setResumeFilename(originalResumeFilename);
-        newInsight.setMatchScore(analysisResultDto.matchScore() != null ? analysisResultDto.matchScore().doubleValue() : null);
-        newInsight.setAtsScore(analysisResultDto.atsScore());
-        newInsight.setAnalysisResult(analysisResultMap);
+        newInsight.setMatchScore(analysisResultDtoFromAi.matchScore() != null ? analysisResultDtoFromAi.matchScore().doubleValue() : null);
+        newInsight.setAtsScore(analysisResultDtoFromAi.atsScore());
+        newInsight.setAnalysisResult(analysisResultMapToStore);
 
         Insights savedInsight = insightsRepository.save(newInsight);
         logger.info("Saved new insight with ID: {} for user: {}", savedInsight.getId(), authenticatedUser.getEmail());
@@ -140,33 +121,32 @@ public class AnalyzerServiceImpl implements AnalyzerService {
         if (insight == null) {
             return null;
         }
-        AnalysisResultDto analysisResultDto = null;
+        AnalysisResultDto analysisResultForDetailDto = null;
         if (insight.getAnalysisResult() != null && !insight.getAnalysisResult().isEmpty()) {
             try {
-                analysisResultDto = objectMapper.convertValue(insight.getAnalysisResult(), AnalysisResultDto.class);
+                analysisResultForDetailDto = objectMapper.convertValue(insight.getAnalysisResult(), AnalysisResultDto.class);
             } catch (IllegalArgumentException e) {
                 logger.error("Error converting analysisResult map to DTO for insight ID {}: {}", insight.getId(), e.getMessage(), e);
             }
         } else {
             logger.warn("Insight ID {} has null or empty analysisResult map.", insight.getId());
         }
-        Integer matchScoreFromDto = (analysisResultDto != null) ? analysisResultDto.matchScore() : null;
-        Integer atsScoreFromDto = (analysisResultDto != null) ? analysisResultDto.atsScore() : null;
 
         return new InsightDetailDto(
                 insight.getId(),
                 insight.getJobTitle(),
                 insight.getResumeFilename(),
-                insight.getCreatedAt(),
-                matchScoreFromDto,
-                atsScoreFromDto,
-                analysisResultDto
+                insight.getCreatedAt(), // RE-ADDED for InsightDetailDto constructor
+                analysisResultForDetailDto
         );
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<InsightSummaryDto> getInsightsHistoryForUser(User user) {
+        // This method remains unchanged from the previous version,
+        // as InsightSummaryDto was not part of this specific change request
+        // and already includes createdAt, matchScore, and atsScore.
         logger.debug("Fetching insights history for user ID: {}", user.getId());
         List<Insights> insightsList = insightsRepository.findByUserOrderByCreatedAtDesc(user);
         return insightsList.stream()
@@ -185,10 +165,13 @@ public class AnalyzerServiceImpl implements AnalyzerService {
                                 atsScore = ((Number) atsScoreObj).intValue();
                             }
                         } catch (Exception e) {
-                            logger.warn("Could not extract scores from analysisResult for summary of insight ID {}", insight.getId());
+                            logger.warn("Could not extract scores from analysisResult map for summary of insight ID {}", insight.getId());
                         }
-                    } else {
-                        matchScore = insight.getMatchScore() != null ? insight.getMatchScore().intValue() : null;
+                    }
+                    if (matchScore == null && insight.getMatchScore() != null) {
+                        matchScore = insight.getMatchScore().intValue();
+                    }
+                    if (atsScore == null && insight.getAtsScore() != null) {
                         atsScore = insight.getAtsScore();
                     }
 
